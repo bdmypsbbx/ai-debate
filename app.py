@@ -4,8 +4,8 @@ import time
 from datetime import datetime
 
 # ==================== 1. 页面配置 ====================
-st.set_page_config(page_title="终身智囊团", layout="wide")
-st.title("🧠 我的终身决策智囊团")
+st.set_page_config(page_title="我的智囊团 · 叠加态决策", layout="wide")
+st.title("🧠 我的智囊团 · 叠加态决策")
 
 # ==================== 2. 你的终身档案 ====================
 USER_PROFILE = {
@@ -13,11 +13,23 @@ USER_PROFILE = {
     "age": "26",
     "gender": "女",
     "height": "165cm",
-    "education": "211本科 · 安全工程",
-    "skills": "擅长从混乱中建立秩序、从0到1快速创造、逻辑思维",
-    "current_status": "离职空窗期，存款有限，急需确定职业方向",
-    "long_term_goal": "找到低社交消耗、有创造空间、收入可持续的工作",
-    "core_traits": "高开放性、低外向性、厌恶高频社交。偏好短周期、高强度、自主性工作。厌恶重复枯燥。决策依赖逻辑，压力下易焦虑。"
+    "education": "211本科 · 安全工程（已放弃本专业）",
+    "skills": "逻辑思维、系统思维、快速学习、从混乱中建立秩序",
+    "current_status": "离职空窗期，正在重新寻找方向",
+    "location": "中国二/三线城市（具体可根据补充）",
+    "core_traits": """
+【性格画像】
+- 高开放性：喜欢学新东西、探索新工具
+- 低外向性：喜欢独处、厌恶高频社交
+- 高神经质（部分）：容易焦虑、对评判敏感
+- 高尽责性（选择性）：对感兴趣的事高度投入
+- 独立型自我构念：追求自主、不依赖外部认可
+
+【决策风格】
+- 依赖逻辑和系统思维
+- 压力下容易预期性焦虑
+- 需要可视化成果来获得能量
+"""
 }
 
 # ==================== 3. 初始化状态 ====================
@@ -26,7 +38,7 @@ if "sessions" not in st.session_state:
     st.session_state.current_session_id = None
 
 if "phase" not in st.session_state:
-    st.session_state.phase = "idle"  # idle | generating | answering | debating | done
+    st.session_state.phase = "idle"
 
 if "current_question" not in st.session_state:
     st.session_state.current_question = ""
@@ -35,20 +47,21 @@ if "questions" not in st.session_state:
     st.session_state.questions = []
 
 if "answers" not in st.session_state:
-    st.session_state.answers = {}  # {question: answer}
+    st.session_state.answers = {}
 
-# 新增：存储用户的回答列表（一次性回答所有追问）
 if "answer_texts" not in st.session_state:
-    st.session_state.answer_texts = []  # 与 questions 一一对应
+    st.session_state.answer_texts = []
 
 if "renaming_session" not in st.session_state:
     st.session_state.renaming_session = None
+
+if "debate_history" not in st.session_state:
+    st.session_state.debate_history = []
 
 # ---------- 侧边栏 ----------
 with st.sidebar:
     st.header("⚙️ 设置")
 
-    # API Key 获取
     try:
         api_key = st.secrets["SILICONFLOW_API_KEY"]
         st.success("✅ 已从 Secrets 读取 API Key")
@@ -67,7 +80,7 @@ with st.sidebar:
         st.markdown(USER_PROFILE['core_traits'])
     st.divider()
 
-    # -------- 会话管理（支持重命名） --------
+    # -------- 会话管理 --------
     st.subheader("📂 话题管理")
 
     if not st.session_state.sessions:
@@ -75,27 +88,21 @@ with st.sidebar:
         st.session_state.sessions[sid] = {"name": "我的第一个话题", "messages": []}
         st.session_state.current_session_id = sid
 
-    # 新建话题
-    new_name = st.text_input("新话题名称", placeholder="输入名称，再点 ➕")
-    col_new, col_new_btn = st.columns([3, 1])
-    with col_new_btn:
-        if st.button("➕ 新建", use_container_width=True):
-            if new_name and new_name.strip():
-                sid = f"session_{int(time.time())}"
-                st.session_state.sessions[sid] = {"name": new_name.strip(), "messages": []}
-                st.session_state.current_session_id = sid
-                st.session_state.phase = "idle"
-                st.session_state.current_question = ""
-                st.session_state.questions = []
-                st.session_state.answers = {}
-                st.session_state.answer_texts = []
-                st.rerun()
-            else:
-                st.warning("请输入名称")
+    new_name = st.text_input("新话题名称", placeholder="输入名称")
+    if st.button("➕ 新建", use_container_width=True):
+        if new_name and new_name.strip():
+            sid = f"session_{int(time.time())}"
+            st.session_state.sessions[sid] = {"name": new_name.strip(), "messages": []}
+            st.session_state.current_session_id = sid
+            st.session_state.phase = "idle"
+            st.session_state.current_question = ""
+            st.session_state.questions = []
+            st.session_state.answers = {}
+            st.session_state.answer_texts = []
+            st.session_state.debate_history = []
+            st.rerun()
 
     st.divider()
-
-    # 话题列表（每个话题带 切换 / 重命名 / 删除）
     st.subheader("📋 话题列表")
     for sid, sess in list(st.session_state.sessions.items())[::-1]:
         col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
@@ -110,29 +117,23 @@ with st.sidebar:
             if st.button("切换", key=f"sw_{sid}"):
                 st.session_state.current_session_id = sid
                 st.session_state.phase = "idle"
-                st.session_state.current_question = ""
-                st.session_state.questions = []
-                st.session_state.answers = {}
-                st.session_state.answer_texts = []
                 st.rerun()
 
         with col3:
-            if st.button("✏️", key=f"rename_{sid}", help="重命名"):
+            if st.button("✏️", key=f"rename_{sid}"):
                 st.session_state.renaming_session = sid
                 st.rerun()
 
         with col4:
-            if st.button("🗑️", key=f"del_{sid}", help="删除"):
+            if st.button("🗑️", key=f"del_{sid}"):
                 if len(st.session_state.sessions) <= 1:
                     st.warning("至少保留一个话题")
                 else:
                     del st.session_state.sessions[sid]
                     if st.session_state.current_session_id == sid:
                         st.session_state.current_session_id = list(st.session_state.sessions.keys())[0]
-                    st.session_state.phase = "idle"
                     st.rerun()
 
-        # 如果当前话题正在重命名，显示输入框
         if st.session_state.renaming_session == sid:
             new_name_input = st.text_input("新名称", value=sess['name'], key=f"rename_input_{sid}")
             col_rename_save, col_rename_cancel = st.columns(2)
@@ -142,8 +143,6 @@ with st.sidebar:
                         st.session_state.sessions[sid]['name'] = new_name_input.strip()
                         st.session_state.renaming_session = None
                         st.rerun()
-                    else:
-                        st.warning("名称不能为空")
             with col_rename_cancel:
                 if st.button("❌ 取消", key=f"rename_cancel_{sid}"):
                     st.session_state.renaming_session = None
@@ -154,23 +153,36 @@ if not st.session_state.sessions:
     sid = f"session_{int(time.time())}"
     st.session_state.sessions[sid] = {"name": "我的第一个话题", "messages": []}
     st.session_state.current_session_id = sid
-    st.session_state.phase = "idle"
 
 current_session = st.session_state.sessions.get(st.session_state.current_session_id)
 if not current_session:
     st.warning("请新建或切换话题")
     st.stop()
 
-# ==================== 5. AI 函数 ====================
+# ==================== 5. 核心：生成追问 ====================
 def generate_questions(question):
-    if not question or not question.strip():
-        return ["请先输入你的问题"]
     prompt = f"""
-你是审问官。用户有问题但信息不够。
-【档案】{USER_PROFILE['core_traits']}
-【问题】{question}
-生成5个关键追问，挖出资金、时间、恐惧、底限。
+你是审问官。用户提出了一个问题，但你对他的具体情况还不够了解。
+
+【用户档案】
+{USER_PROFILE['core_traits']}
+
+【用户的问题】
+{question}
+
+【你的任务】
+生成5个追问，目的是把用户的问题从「抽象」拉回「具体」。
+
+追问的方向（根据问题类型灵活调整，不要机械套用）：
+1. 用户在这个问题上的「具体处境」是什么？
+2. 用户「真正担心/恐惧」的是什么？
+3. 用户手中「有什么资源/筹码」？
+4. 用户「最不能接受」的后果是什么？
+5. 用户「希望达成的理想状态」是什么？
+
+【输出格式】
 直接输出5个问题，数字1-5开头。
+问题必须具体、围绕用户个人情况，不要问泛泛的问题。
 """
     try:
         resp = client.chat.completions.create(
@@ -191,32 +203,81 @@ def generate_questions(question):
             qs.append("还有什么关键信息需要补充？")
         return qs[:5]
     except Exception as e:
-        return [f"⚠️ 生成追问失败：{str(e)[:50]}...", "请检查 API Key 是否正确", "或稍后重试"]
+        return [f"⚠️ 生成追问失败：{str(e)[:50]}"]
 
-def call_ai(question, answers_dict):
-    if not question or not question.strip():
-        return "❌ 问题不能为空"
+# ==================== 6. 核心：单个角色发言 ====================
+def call_role(role_name, role_identity, role_task, question, answers_dict, previous_speeches=""):
     answers_text = ""
     for i, (q, a) in enumerate(answers_dict.items(), 1):
         answers_text += f"【追问{i}】{q}\n【回答】{a}\n\n"
+
+    previous_text = ""
+    if previous_speeches:
+        previous_text = f"\n【前面已经发表的言论（你必须认真阅读并回应）】：\n{previous_speeches}\n"
+
     prompt = f"""
-你是智囊团。已了解全部信息。
-【档案】{USER_PROFILE['core_traits']}
-【问题】{question}
-【补充】{answers_text}
-从三角度分析：激进扩张派、保守防御派、理性数据派。最后董秘给3条结论。标注置信度。不给情绪价值。
+你是【{role_name}】。
+
+【你的身份】
+{role_identity}
+
+【你的核心任务】
+{role_task}
+
+【你必须时刻记住的用户信息】
+{USER_PROFILE['core_traits']}
+
+【用户提出的问题】
+{question}
+
+【用户对追问的回答】
+{answers_text}
+{previous_text}
+
+【核心方法论：叠加态决策】
+你的每一次分析，必须同时考虑两个层面，然后把它们叠加在一起：
+1. 「用户这个人」：性格、经历、恐惧、价值观、资源
+2. 「用户身处的现实」：社会规则、经济环境、文化背景、所在城市的实际情况
+
+只有这两个层面叠加在一起，你的回答才是「为这个用户量身定制」的，而不是放之四海而皆准的套话。
+
+【发言铁律】
+1. 不要说「你应该怎么做」，要说「基于你的情况，我建议考虑什么」
+2. 必须区分「我确定的」和「我不确定的」。不确定的明确说出来。
+3. 不要编造数据。如果引用经验，说「根据普遍经验」。
+4. 结尾必须给出「可执行的下一步」。
+
+【‼️ 重要：关键词加粗规则】
+在你的回答中，必须用 **加粗** 来突出以下内容（使用 Markdown 的 ** 语法）：
+- 核心结论
+- 具体数字、金额、时间节点
+- 行动指令
+- 关键建议
+- 风险警告
+- 置信度百分比
+
+例如：「**建议你先花3天时间**做这件事，**成功率约70%**，**最坏情况是损失5000元**。」
+
+【发言结构】
+1. 针对用户个人情况的分析
+2. 结合社会现实的分析
+3. 对前面发言的回应（如果有）
+4. 可执行的下一步（必须加粗）
+5. 我的不确定清单
+
+现在开始发言。记住：你是在帮一个真实的人做决策，不是在写论文。
 """
     try:
         resp = client.chat.completions.create(
             model="deepseek-ai/DeepSeek-V3",
             messages=[{"role": "system", "content": prompt}],
-            temperature=0.65,
+            temperature=0.8,
         )
         return resp.choices[0].message.content
     except Exception as e:
-        return f"❌ 分析失败：{str(e)[:100]}"
+        return f"❌ {role_name} 发言失败：{str(e)[:80]}"
 
-# ==================== 6. 显示历史消息 ====================
+# ==================== 7. 显示历史消息 ====================
 st.subheader(f"💬 {current_session['name']}")
 
 col1, col2 = st.columns(2)
@@ -234,31 +295,36 @@ with col2:
         st.session_state.questions = []
         st.session_state.answers = {}
         st.session_state.answer_texts = []
+        st.session_state.debate_history = []
         st.rerun()
 
 st.divider()
 
-# 显示历史消息
 for msg in current_session["messages"]:
     with st.chat_message(msg["role"]):
         st.markdown(f"**{msg['role']}**  `{msg.get('timestamp', '')}`")
         st.markdown(msg["content"])
 
-# ==================== 7. 核心交互流程 ====================
+# ==================== 8. 交互流程 ====================
 
-# -------- 阶段1：空闲状态 -> 输入问题（回车即发送） --------
+# -------- 阶段1：输入问题 --------
 if st.session_state.phase == "idle":
-    # 使用 st.chat_input，回车直接发送，文字大小默认舒适
-    user_input = st.chat_input("💬 输入你的决策问题（回车发送）...")
+    user_input = st.chat_input("💬 任何问题都可以问（回车发送）...")
     if user_input and user_input.strip():
+        current_session["messages"].append({
+            "role": "我",
+            "content": user_input.strip(),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+        })
         st.session_state.current_question = user_input.strip()
         st.session_state.phase = "generating"
         st.session_state.answers = {}
         st.session_state.questions = []
         st.session_state.answer_texts = []
+        st.session_state.debate_history = []
         st.rerun()
 
-# -------- 阶段2：生成追问（自动） --------
+# -------- 阶段2：生成追问 --------
 if st.session_state.phase == "generating":
     if not st.session_state.current_question:
         st.session_state.phase = "idle"
@@ -266,16 +332,16 @@ if st.session_state.phase == "generating":
         st.rerun()
     else:
         with st.chat_message("审问官"):
-            with st.spinner("正在生成5个关键追问..."):
+            with st.spinner("生成追问中..."):
                 qs = generate_questions(st.session_state.current_question)
                 if qs and qs[0].startswith("⚠️"):
                     st.error(qs[0])
                     st.session_state.phase = "idle"
                     st.rerun()
                 st.session_state.questions = qs
-                st.session_state.answer_texts = [""] * len(qs)  # 初始化空答案列表
+                st.session_state.answer_texts = [""] * len(qs)
                 st.session_state.phase = "answering"
-                q_text = "为了更深入了解，请回答以下5个问题：\n\n"
+                q_text = "为了更深入了解你的情况，请回答以下5个问题：\n\n"
                 for i, q in enumerate(qs, 1):
                     q_text += f"{i}. {q}\n"
                 current_session["messages"].append({
@@ -285,31 +351,24 @@ if st.session_state.phase == "generating":
                 })
                 st.rerun()
 
-# -------- 阶段3：回答追问（一次性展示所有问题，一次性提交） --------
+# -------- 阶段3：回答问题 --------
 if st.session_state.phase == "answering":
-    st.info(f"📌 请回答以下 {len(st.session_state.questions)} 个问题，回答完毕后点击底部按钮提交")
+    st.info(f"📌 请回答以下 {len(st.session_state.questions)} 个问题")
 
-    # 使用 form 包裹所有输入框，一次提交全部答案
     with st.form(key="answer_form", clear_on_submit=False):
-        # 动态生成每个问题的输入框
         for i, q in enumerate(st.session_state.questions):
-            # 使用 text_area 让用户可以写长回答
             answer = st.text_area(
                 f"**问题 {i+1}**：{q}",
                 value=st.session_state.answer_texts[i] if i < len(st.session_state.answer_texts) else "",
                 height=80,
-                key=f"answer_{i}",
-                placeholder=f"请回答第 {i+1} 个问题..."
+                key=f"answer_{i}"
             )
-            # 实时保存到 session_state
             if i < len(st.session_state.answer_texts):
                 st.session_state.answer_texts[i] = answer
 
-        # 提交按钮
         submitted = st.form_submit_button("🚀 提交全部回答", use_container_width=True)
 
     if submitted:
-        # 检查是否所有问题都已回答
         empty_indices = []
         for i, ans in enumerate(st.session_state.answer_texts):
             if not ans or not ans.strip():
@@ -317,50 +376,170 @@ if st.session_state.phase == "answering":
         if empty_indices:
             st.warning(f"⚠️ 以下问题还未回答：{', '.join(map(str, empty_indices))}")
         else:
-            # 保存所有回答
             for i, q in enumerate(st.session_state.questions):
                 st.session_state.answers[q] = st.session_state.answer_texts[i]
-                # 逐条记录到消息历史
                 current_session["messages"].append({
                     "role": "我",
                     "content": f"【回答追问】{q}\n{st.session_state.answer_texts[i]}",
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
                 })
-            # 进入辩论阶段
             st.session_state.phase = "debating"
+            st.session_state.debate_history = []
             st.rerun()
 
-# -------- 阶段4：辩论（自动） --------
+# -------- 阶段4：智囊团讨论 --------
 if st.session_state.phase == "debating":
-    if not st.session_state.current_question:
-        st.session_state.phase = "idle"
-        st.warning("问题丢失，请重新输入")
-        st.rerun()
-    else:
-        with st.chat_message("智囊团"):
-            with st.spinner("三位高管正在激烈讨论..."):
-                reply = call_ai(st.session_state.current_question, st.session_state.answers)
-                if reply.startswith("❌"):
-                    st.error(reply)
-                    st.session_state.phase = "idle"
-                    st.rerun()
+    roles = [
+        {
+            "name": "务实派·生存智者",
+            "identity": "50岁，在人间摸爬滚打了一辈子的长辈。开过店、打过工、赔过钱、养过家。擅长把任何问题拆解成成本、收益、风险、时间。",
+            "task": "用最实际的方式分析问题，告诉用户这件事在现实中具体怎么操作，最现实的限制条件是什么。不谈梦想，只谈现实。"
+        },
+        {
+            "name": "远见派·系统构建者",
+            "identity": "38岁，经历过多次人生转折的战略顾问。擅长把复杂问题拆解成阶段和节点，看5年后的发展轨迹。",
+            "task": "画出这件事的发展时间线——1个月后、3个月后、1年后分别是什么状态。帮用户看到方向，而不是只盯着眼前。"
+        },
+        {
+            "name": "风险派·现实审计师",
+            "identity": "45岁，做过尽调、经历过暴雷的风险控制专家。不相信任何美好的可能性，只关心用户能否承受最坏的结果。",
+            "task": "推演最坏情况，识别建议中的致命漏洞，给出止损红线。告诉用户：如果全搞砸了，你还能不能爬起来。"
+        }
+    ]
+
+    max_rounds = 2
+    total_speeches = len(roles) * max_rounds
+
+    if len(st.session_state.debate_history) < total_speeches:
+        current_index = len(st.session_state.debate_history)
+        role_idx = current_index % len(roles)
+        role = roles[role_idx]
+
+        previous_speeches = ""
+        if st.session_state.debate_history:
+            recent = st.session_state.debate_history[-2:]
+            for r in recent:
+                previous_speeches += f"【{r['role']}】{r['content'][:300]}...\n\n"
+
+        with st.chat_message(role["name"]):
+            with st.spinner(f"{role['name']} 正在思考..."):
+                reply = call_role(
+                    role["name"],
+                    role["identity"],
+                    role["task"],
+                    st.session_state.current_question,
+                    st.session_state.answers,
+                    previous_speeches
+                )
+                st.markdown(f"**{role['name']}**")
                 st.markdown(reply)
-                current_session["messages"].append({
-                    "role": "智囊团",
+
+                st.session_state.debate_history.append({
+                    "role": role["name"],
                     "content": reply,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+                })
+                current_session["messages"].append({
+                    "role": role["name"],
+                    "content": reply,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+                })
+
+        if len(st.session_state.debate_history) >= total_speeches:
+            st.session_state.phase = "summarizing"
+        st.rerun()
+
+    else:
+        st.session_state.phase = "summarizing"
+        st.rerun()
+
+# -------- 阶段5：董秘总结 --------
+if st.session_state.phase == "summarizing":
+    all_speeches = ""
+    for entry in st.session_state.debate_history:
+        all_speeches += f"【{entry['role']}】{entry['content']}\n\n"
+
+    with st.chat_message("董秘"):
+        with st.spinner("董秘正在整理..."):
+            prompt = f"""
+你是董秘，负责把三位智囊的讨论总结成一份「老板能直接看」的决策清单。
+
+【用户的问题】
+{st.session_state.current_question}
+
+【三位的完整讨论】
+{all_speeches}
+
+【你的任务】
+1. 提炼共识：三位智囊在哪些问题上达成了一致？
+2. 指出分歧：分歧点在哪里？你倾向于哪一边？
+3. 给出3条明确的、可执行的建议
+4. 标注每条建议的置信度
+5. 列出「需要用户自己去验证的事情」
+
+【‼️ 关键词加粗规则】
+在总结中，必须用 **加粗** 突出以下内容：
+- 三条核心建议（用 **建议一**、**建议二**、**建议三** 格式）
+- 具体数字、时间、金额
+- 置信度百分比
+- 关键行动指令
+- 最重要的风险警告
+
+例如：「**建议一**：**本周花3天时间**做XX事，**置信度75%**。如果失败，**损失不超过2000元**。」
+
+【输出格式】
+## 📋 决策清单
+
+### 三位智囊的共识
+（简洁列出）
+
+### 分歧点
+（简洁列出，并给出你的倾向）
+
+### 三条建议
+1. **建议一**：（具体内容）（置信度：XX%）
+2. **建议二**：（具体内容）（置信度：XX%）
+3. **建议三**：（具体内容）（置信度：XX%）
+
+### 你需要自己去验证的事情
+1. 
+2. 
+3. 
+"""
+            try:
+                resp = client.chat.completions.create(
+                    model="deepseek-ai/DeepSeek-V3",
+                    messages=[{"role": "system", "content": prompt}],
+                    temperature=0.6,
+                )
+                summary = resp.choices[0].message.content
+                st.markdown(summary)
+                current_session["messages"].append({
+                    "role": "董秘",
+                    "content": summary,
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
                 })
                 st.session_state.phase = "done"
                 st.rerun()
+            except Exception as e:
+                st.error(f"总结失败：{str(e)[:80]}")
+                st.session_state.phase = "done"
+                st.rerun()
 
-# -------- 阶段5：完成 --------
+# -------- 阶段6：完成 --------
 if st.session_state.phase == "done":
-    st.success("✅ 分析完成！输入新问题即可继续讨论。")
-    user_input = st.chat_input("💬 输入新问题（回车发送）...")
+    st.success("✅ 讨论完成！可以问下一个问题。")
+    user_input = st.chat_input("💬 下一个问题...")
     if user_input and user_input.strip():
+        current_session["messages"].append({
+            "role": "我",
+            "content": user_input.strip(),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+        })
         st.session_state.current_question = user_input.strip()
         st.session_state.phase = "generating"
         st.session_state.answers = {}
         st.session_state.questions = []
         st.session_state.answer_texts = []
+        st.session_state.debate_history = []
         st.rerun()
