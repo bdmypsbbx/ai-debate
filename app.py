@@ -6,9 +6,14 @@ from datetime import datetime
 # ==================== 1. 页面配置 + 自定义样式 ====================
 st.set_page_config(page_title="我的智囊团 · 叠加态决策", layout="wide")
 
-# 注入自定义 CSS：让输入框字体变大
+# 注入自定义 CSS：调大 chat_input 和 text_area 的字体
 st.markdown("""
 <style>
+    /* 让 chat_input 字体变大 */
+    .stChatInput textarea {
+        font-size: 18px !important;
+        line-height: 1.6 !important;
+    }
     /* 让所有 text_area 输入框字体变大 */
     .stTextArea textarea {
         font-size: 18px !important;
@@ -83,9 +88,8 @@ if "renaming_session" not in st.session_state:
 if "debate_history" not in st.session_state:
     st.session_state.debate_history = []
 
-# 【新增】存储正在编辑的消息索引
 if "editing_msg" not in st.session_state:
-    st.session_state.editing_msg = None  # (session_id, msg_index)
+    st.session_state.editing_msg = None
 
 # ---------- 侧边栏 ----------
 with st.sidebar:
@@ -331,12 +335,11 @@ st.divider()
 # -------- 显示消息列表（带编辑功能） --------
 messages = current_session["messages"]
 
-# 先处理编辑状态：如果当前会话有消息在编辑，显示编辑界面
+# 处理编辑状态
 editing_target = st.session_state.editing_msg
 if editing_target is not None:
     edit_sid, edit_idx = editing_target
     if edit_sid == st.session_state.current_session_id and edit_idx < len(messages):
-        # 显示编辑界面
         msg = messages[edit_idx]
         with st.container(border=True):
             st.markdown(f"**✏️ 编辑消息 ( {msg['role']} )**")
@@ -365,14 +368,12 @@ if editing_target is not None:
 
 # 显示所有消息（除了正在编辑的那条）
 for idx, msg in enumerate(messages):
-    # 如果这条消息正在编辑，跳过（已在上方单独显示）
     if st.session_state.editing_msg is not None:
         edit_sid, edit_idx = st.session_state.editing_msg
         if edit_sid == st.session_state.current_session_id and edit_idx == idx:
             continue
 
     with st.chat_message(msg["role"]):
-        # 消息头部：角色名 + 时间戳 + 操作按钮
         col_header, col_edit, col_delete = st.columns([10, 1, 1])
         with col_header:
             st.markdown(f"**{msg['role']}**  `{msg.get('timestamp', '')}`")
@@ -383,7 +384,6 @@ for idx, msg in enumerate(messages):
         with col_delete:
             if st.button("🗑️", key=f"del_btn_{idx}", help="删除此消息"):
                 del messages[idx]
-                # 如果删除后编辑索引指向了被删除的消息，清除编辑状态
                 if st.session_state.editing_msg is not None:
                     edit_sid, edit_idx = st.session_state.editing_msg
                     if edit_sid == st.session_state.current_session_id and edit_idx == idx:
@@ -392,26 +392,14 @@ for idx, msg in enumerate(messages):
                         st.session_state.editing_msg = (edit_sid, edit_idx - 1)
                 st.rerun()
 
-        # 消息内容
         st.markdown(msg["content"])
 
 # ==================== 8. 交互流程 ====================
 
-# -------- 阶段1：输入问题（大字体输入框） --------
+# -------- 阶段1：空闲状态 -> 使用 st.chat_input（回车发送，大字体） --------
 if st.session_state.phase == "idle":
-    st.markdown("---")
-    st.markdown("### 📝 输入你的问题")
-    with st.form(key="question_form", clear_on_submit=True):
-        user_input = st.text_area(
-            "问题",
-            placeholder="任何问题都可以问，描述越详细越好...",
-            height=120,
-            key="question_input",
-            label_visibility="collapsed"
-        )
-        submitted = st.form_submit_button("🚀 发送问题", use_container_width=True)
-
-    if submitted and user_input and user_input.strip():
+    user_input = st.chat_input("💬 输入你的问题（回车直接发送）...")
+    if user_input and user_input.strip():
         current_session["messages"].append({
             "role": "我",
             "content": user_input.strip(),
@@ -452,7 +440,7 @@ if st.session_state.phase == "generating":
                 })
                 st.rerun()
 
-# -------- 阶段3：回答问题（大字体输入框） --------
+# -------- 阶段3：回答追问（使用 st.form，大字体，点击按钮提交） --------
 if st.session_state.phase == "answering":
     st.info(f"📌 请回答以下 {len(st.session_state.questions)} 个问题")
 
@@ -619,28 +607,20 @@ if st.session_state.phase == "summarizing":
                 st.session_state.phase = "done"
                 st.rerun()
 
-# -------- 阶段6：完成 --------
+# -------- 阶段6：完成（使用 st.chat_input，回车发送） --------
 if st.session_state.phase == "done":
     st.success("✅ 讨论完成！可以问下一个问题。")
-    with st.form(key="next_question_form", clear_on_submit=True):
-        user_input = st.text_area(
-            "新问题",
-            placeholder="输入下一个问题...",
-            height=100,
-            key="next_question_input",
-            label_visibility="collapsed"
-        )
-        submitted = st.form_submit_button("🚀 发送", use_container_width=True)
-        if submitted and user_input and user_input.strip():
-            current_session["messages"].append({
-                "role": "我",
-                "content": user_input.strip(),
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
-            })
-            st.session_state.current_question = user_input.strip()
-            st.session_state.phase = "generating"
-            st.session_state.answers = {}
-            st.session_state.questions = []
-            st.session_state.answer_texts = []
-            st.session_state.debate_history = []
-            st.rerun()
+    user_input = st.chat_input("💬 输入下一个问题（回车发送）...")
+    if user_input and user_input.strip():
+        current_session["messages"].append({
+            "role": "我",
+            "content": user_input.strip(),
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+        })
+        st.session_state.current_question = user_input.strip()
+        st.session_state.phase = "generating"
+        st.session_state.answers = {}
+        st.session_state.questions = []
+        st.session_state.answer_texts = []
+        st.session_state.debate_history = []
+        st.rerun()
