@@ -3,8 +3,33 @@ from openai import OpenAI
 import time
 from datetime import datetime
 
-# ==================== 1. 页面配置 ====================
+# ==================== 1. 页面配置 + 自定义样式 ====================
 st.set_page_config(page_title="我的智囊团 · 叠加态决策", layout="wide")
+
+# 注入自定义 CSS：让输入框字体变大
+st.markdown("""
+<style>
+    /* 让所有 text_area 输入框字体变大 */
+    .stTextArea textarea {
+        font-size: 18px !important;
+        line-height: 1.6 !important;
+    }
+    /* 让所有 text_input 也变大 */
+    .stTextInput input {
+        font-size: 16px !important;
+    }
+    /* 让聊天消息里的文字更清晰 */
+    .stChatMessage {
+        font-size: 15px !important;
+    }
+    /* 编辑模式的输入框更大 */
+    .edit-textarea textarea {
+        font-size: 16px !important;
+        line-height: 1.5 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🧠 我的智囊团 · 叠加态决策")
 
 # ==================== 2. 你的终身档案 ====================
@@ -58,6 +83,10 @@ if "renaming_session" not in st.session_state:
 if "debate_history" not in st.session_state:
     st.session_state.debate_history = []
 
+# 【新增】存储正在编辑的消息索引
+if "editing_msg" not in st.session_state:
+    st.session_state.editing_msg = None  # (session_id, msg_index)
+
 # ---------- 侧边栏 ----------
 with st.sidebar:
     st.header("⚙️ 设置")
@@ -100,6 +129,7 @@ with st.sidebar:
             st.session_state.answers = {}
             st.session_state.answer_texts = []
             st.session_state.debate_history = []
+            st.session_state.editing_msg = None
             st.rerun()
 
     st.divider()
@@ -117,6 +147,7 @@ with st.sidebar:
             if st.button("切换", key=f"sw_{sid}"):
                 st.session_state.current_session_id = sid
                 st.session_state.phase = "idle"
+                st.session_state.editing_msg = None
                 st.rerun()
 
         with col3:
@@ -239,16 +270,14 @@ def call_role(role_name, role_identity, role_task, question, answers_dict, previ
 1. 「用户这个人」：性格、经历、恐惧、价值观、资源
 2. 「用户身处的现实」：社会规则、经济环境、文化背景、所在城市的实际情况
 
-只有这两个层面叠加在一起，你的回答才是「为这个用户量身定制」的，而不是放之四海而皆准的套话。
-
 【发言铁律】
 1. 不要说「你应该怎么做」，要说「基于你的情况，我建议考虑什么」
 2. 必须区分「我确定的」和「我不确定的」。不确定的明确说出来。
 3. 不要编造数据。如果引用经验，说「根据普遍经验」。
 4. 结尾必须给出「可执行的下一步」。
 
-【‼️ 重要：关键词加粗规则】
-在你的回答中，必须用 **加粗** 来突出以下内容（使用 Markdown 的 ** 语法）：
+【‼️ 关键词加粗规则】
+在你的回答中，必须用 **加粗** 来突出以下内容：
 - 核心结论
 - 具体数字、金额、时间节点
 - 行动指令
@@ -256,16 +285,14 @@ def call_role(role_name, role_identity, role_task, question, answers_dict, previ
 - 风险警告
 - 置信度百分比
 
-例如：「**建议你先花3天时间**做这件事，**成功率约70%**，**最坏情况是损失5000元**。」
-
 【发言结构】
 1. 针对用户个人情况的分析
 2. 结合社会现实的分析
 3. 对前面发言的回应（如果有）
-4. 可执行的下一步（必须加粗）
+4. 可执行的下一步
 5. 我的不确定清单
 
-现在开始发言。记住：你是在帮一个真实的人做决策，不是在写论文。
+现在开始发言。
 """
     try:
         resp = client.chat.completions.create(
@@ -277,7 +304,7 @@ def call_role(role_name, role_identity, role_task, question, answers_dict, previ
     except Exception as e:
         return f"❌ {role_name} 发言失败：{str(e)[:80]}"
 
-# ==================== 7. 显示历史消息 ====================
+# ==================== 7. 显示历史消息（支持编辑） ====================
 st.subheader(f"💬 {current_session['name']}")
 
 col1, col2 = st.columns(2)
@@ -296,21 +323,95 @@ with col2:
         st.session_state.answers = {}
         st.session_state.answer_texts = []
         st.session_state.debate_history = []
+        st.session_state.editing_msg = None
         st.rerun()
 
 st.divider()
 
-for msg in current_session["messages"]:
+# -------- 显示消息列表（带编辑功能） --------
+messages = current_session["messages"]
+
+# 先处理编辑状态：如果当前会话有消息在编辑，显示编辑界面
+editing_target = st.session_state.editing_msg
+if editing_target is not None:
+    edit_sid, edit_idx = editing_target
+    if edit_sid == st.session_state.current_session_id and edit_idx < len(messages):
+        # 显示编辑界面
+        msg = messages[edit_idx]
+        with st.container(border=True):
+            st.markdown(f"**✏️ 编辑消息 ( {msg['role']} )**")
+            new_content = st.text_area(
+                "修改内容",
+                value=msg["content"],
+                height=200,
+                key=f"edit_area_{edit_idx}",
+                label_visibility="collapsed"
+            )
+            col_save, col_cancel = st.columns(2)
+            with col_save:
+                if st.button("✅ 保存修改", key=f"save_edit_{edit_idx}"):
+                    if new_content and new_content.strip():
+                        messages[edit_idx]["content"] = new_content.strip()
+                        messages[edit_idx]["timestamp"] = f"{datetime.now().strftime('%Y-%m-%d %H:%M')} (已编辑)"
+                        st.session_state.editing_msg = None
+                        st.rerun()
+                    else:
+                        st.warning("内容不能为空")
+            with col_cancel:
+                if st.button("❌ 取消编辑", key=f"cancel_edit_{edit_idx}"):
+                    st.session_state.editing_msg = None
+                    st.rerun()
+        st.divider()
+
+# 显示所有消息（除了正在编辑的那条）
+for idx, msg in enumerate(messages):
+    # 如果这条消息正在编辑，跳过（已在上方单独显示）
+    if st.session_state.editing_msg is not None:
+        edit_sid, edit_idx = st.session_state.editing_msg
+        if edit_sid == st.session_state.current_session_id and edit_idx == idx:
+            continue
+
     with st.chat_message(msg["role"]):
-        st.markdown(f"**{msg['role']}**  `{msg.get('timestamp', '')}`")
+        # 消息头部：角色名 + 时间戳 + 操作按钮
+        col_header, col_edit, col_delete = st.columns([10, 1, 1])
+        with col_header:
+            st.markdown(f"**{msg['role']}**  `{msg.get('timestamp', '')}`")
+        with col_edit:
+            if st.button("✏️", key=f"edit_btn_{idx}", help="编辑此消息"):
+                st.session_state.editing_msg = (st.session_state.current_session_id, idx)
+                st.rerun()
+        with col_delete:
+            if st.button("🗑️", key=f"del_btn_{idx}", help="删除此消息"):
+                del messages[idx]
+                # 如果删除后编辑索引指向了被删除的消息，清除编辑状态
+                if st.session_state.editing_msg is not None:
+                    edit_sid, edit_idx = st.session_state.editing_msg
+                    if edit_sid == st.session_state.current_session_id and edit_idx == idx:
+                        st.session_state.editing_msg = None
+                    elif edit_sid == st.session_state.current_session_id and edit_idx > idx:
+                        st.session_state.editing_msg = (edit_sid, edit_idx - 1)
+                st.rerun()
+
+        # 消息内容
         st.markdown(msg["content"])
 
 # ==================== 8. 交互流程 ====================
 
-# -------- 阶段1：输入问题 --------
+# -------- 阶段1：输入问题（大字体输入框） --------
 if st.session_state.phase == "idle":
-    user_input = st.chat_input("💬 任何问题都可以问（回车发送）...")
-    if user_input and user_input.strip():
+    st.markdown("---")
+    st.markdown("### 📝 输入你的问题")
+    with st.form(key="question_form", clear_on_submit=True):
+        user_input = st.text_area(
+            "问题",
+            placeholder="任何问题都可以问，描述越详细越好...",
+            height=120,
+            key="question_input",
+            label_visibility="collapsed"
+        )
+        submitted = st.form_submit_button("🚀 发送问题", use_container_width=True)
+
+    if submitted and user_input and user_input.strip():
         current_session["messages"].append({
             "role": "我",
             "content": user_input.strip(),
@@ -351,7 +452,7 @@ if st.session_state.phase == "generating":
                 })
                 st.rerun()
 
-# -------- 阶段3：回答问题 --------
+# -------- 阶段3：回答问题（大字体输入框） --------
 if st.session_state.phase == "answering":
     st.info(f"📌 请回答以下 {len(st.session_state.questions)} 个问题")
 
@@ -361,7 +462,8 @@ if st.session_state.phase == "answering":
                 f"**问题 {i+1}**：{q}",
                 value=st.session_state.answer_texts[i] if i < len(st.session_state.answer_texts) else "",
                 height=80,
-                key=f"answer_{i}"
+                key=f"answer_{i}",
+                label_visibility="collapsed"
             )
             if i < len(st.session_state.answer_texts):
                 st.session_state.answer_texts[i] = answer
@@ -478,28 +580,19 @@ if st.session_state.phase == "summarizing":
 5. 列出「需要用户自己去验证的事情」
 
 【‼️ 关键词加粗规则】
-在总结中，必须用 **加粗** 突出以下内容：
-- 三条核心建议（用 **建议一**、**建议二**、**建议三** 格式）
-- 具体数字、时间、金额
-- 置信度百分比
-- 关键行动指令
-- 最重要的风险警告
-
-例如：「**建议一**：**本周花3天时间**做XX事，**置信度75%**。如果失败，**损失不超过2000元**。」
+必须用 **加粗** 突出：三条核心建议、具体数字/时间、置信度、关键行动指令、风险警告。
 
 【输出格式】
 ## 📋 决策清单
 
 ### 三位智囊的共识
-（简洁列出）
 
 ### 分歧点
-（简洁列出，并给出你的倾向）
 
 ### 三条建议
-1. **建议一**：（具体内容）（置信度：XX%）
-2. **建议二**：（具体内容）（置信度：XX%）
-3. **建议三**：（具体内容）（置信度：XX%）
+1. **建议一**：（内容）（置信度：XX%）
+2. **建议二**：（内容）（置信度：XX%）
+3. **建议三**：（内容）（置信度：XX%）
 
 ### 你需要自己去验证的事情
 1. 
@@ -529,17 +622,25 @@ if st.session_state.phase == "summarizing":
 # -------- 阶段6：完成 --------
 if st.session_state.phase == "done":
     st.success("✅ 讨论完成！可以问下一个问题。")
-    user_input = st.chat_input("💬 下一个问题...")
-    if user_input and user_input.strip():
-        current_session["messages"].append({
-            "role": "我",
-            "content": user_input.strip(),
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
-        })
-        st.session_state.current_question = user_input.strip()
-        st.session_state.phase = "generating"
-        st.session_state.answers = {}
-        st.session_state.questions = []
-        st.session_state.answer_texts = []
-        st.session_state.debate_history = []
-        st.rerun()
+    with st.form(key="next_question_form", clear_on_submit=True):
+        user_input = st.text_area(
+            "新问题",
+            placeholder="输入下一个问题...",
+            height=100,
+            key="next_question_input",
+            label_visibility="collapsed"
+        )
+        submitted = st.form_submit_button("🚀 发送", use_container_width=True)
+        if submitted and user_input and user_input.strip():
+            current_session["messages"].append({
+                "role": "我",
+                "content": user_input.strip(),
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M")
+            })
+            st.session_state.current_question = user_input.strip()
+            st.session_state.phase = "generating"
+            st.session_state.answers = {}
+            st.session_state.questions = []
+            st.session_state.answer_texts = []
+            st.session_state.debate_history = []
+            st.rerun()
